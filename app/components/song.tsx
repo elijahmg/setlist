@@ -1,26 +1,30 @@
 'use client';
 
-import { useDraggable } from '@dnd-kit/core';
+import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { UniqueIdentifier } from "@dnd-kit/core";
 
 interface Props {
+  id: UniqueIdentifier;
   name: string;
-  uniqueId?: string;
-  activeList?: string;
 }
 
-export function Song({ name, uniqueId, activeList }: Props) {
-  const { attributes, listeners, setNodeRef, transform } = useDraggable({
-    id: name + '-' + (uniqueId ?? ''),
-    data: {
-      name,
-      activeList
-    }
+export function Song({ id, name }: Props) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+  } = useSortable({
+    id
   });
 
   const style = {
-    transform: CSS.Translate.toString(transform),
+    transform: CSS.Transform.toString(transform),
+    transition,
   };
 
-  return <li ref={setNodeRef} style={style} {...listeners} {...attributes} className="flex bg-white rounded p-4">{name}</li>
+  return <li ref={setNodeRef} style={style} {...listeners} {...attributes}
+             className="flex bg-white rounded p-4 box-border">{name}</li>
 }

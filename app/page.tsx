@@ -1,78 +1,172 @@
 'use client';
 
-import { Actions, ListId, songs, SongsMap, SongType } from "@/app/utils/songs";
+import React from 'react';
+import { ListId, songs, SongType } from "@/app/utils/songs";
 import { Song } from "@/app/components/song";
 import {
-  DndContext,
-  rectIntersection,
-  Over,
   Active,
   CollisionDetection,
+  DndContext,
+  getFirstCollision,
+  KeyboardSensor,
+  MouseSensor,
+  Over,
+  PointerSensor,
   pointerWithin,
-  getFirstCollision, closestCenter, UniqueIdentifier
+  rectIntersection,
+  UniqueIdentifier,
+  useSensor,
+  useSensors
 } from '@dnd-kit/core';
 import { useCallback, useRef, useState } from "react";
 import { Setlist } from "@/app/components/setlist";
 
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+
 const TRASH_ID = 'void';
 
+type Items = Record<UniqueIdentifier, SongType[]>;
+
 export default function Home() {
-  const [listOne, setListOne] = useState<SongsMap>(new Map())
-  const [listTwo, setListTwo] = useState<SongsMap>(new Map())
-  const [listThree, setListThree] = useState<SongsMap>(new Map())
 
   const [activeId, setActiveId] = useState<UniqueIdentifier | null>(null);
+  const [items, setItems] = useState<Items>({
+    default: songs,
+    ['list-1']: [],
+    ['list-2']: [],
+    ['list-3']: [],
+  });
+  const [clonedItems, setClonedItems] = useState<Items | null>(null);
+
+  const containers = Object.keys(items);
 
   const lastOverId = useRef<UniqueIdentifier | null>(null);
   const recentlyMovedToNewContainer = useRef(false);
 
-  const actions: Actions = {
-    "list-1": {
-      state: listOne,
-      action: setListOne,
-    },
-    "list-2": {
-      state: listTwo,
-      action: setListTwo,
-    },
-    "list-3": {
-      state: listThree,
-      action: setListThree,
-    }
+  function handleDeleteItem(songName: string, activeList: ListId) {
+
   }
 
-  function handleDeleteItem(songName: string, activeList: ListId) {
-    const { state, action } = actions[activeList];
+  function onDragOver(over: Over | null, active: Active) {
+    const overId = over?.id;
 
-    const newMap = new Map(state);
+    if (overId == null || overId === TRASH_ID || active.id in items) {
+      return;
+    }
 
-    newMap.delete(songName);
-    action(newMap)
+    const overContainer = findContainer(overId);
+    const activeContainer = findContainer(active.id);
+
+
+    if (!overContainer || !activeContainer) {
+      return;
+    }
+
+    if (activeContainer !== overContainer) {
+      setItems((items) => {
+        const activeItems = items[activeContainer];
+        const overItems = items[overContainer];
+        const overIndex = overItems.findIndex(({ id }) => id === overId);
+        const activeIndex = activeItems.findIndex(({ id }) => id === active.id);
+
+        let newIndex: number;
+
+        if (overId in items) {
+          newIndex = overItems.length + 1;
+        } else {
+          const isBelowOverItem =
+            over &&
+            active.rect.current.translated &&
+            active.rect.current.translated.top >
+            over.rect.top + over.rect.height;
+
+          const modifier = isBelowOverItem ? 1 : 0;
+
+          newIndex =
+            overIndex >= 0 ? overIndex + modifier : overItems.length + 1;
+        }
+
+        recentlyMovedToNewContainer.current = true;
+
+        return {
+          ...items,
+          [activeContainer]: items[activeContainer].filter(
+            (item) => item.id !== active.id
+          ),
+          [overContainer]: [
+            ...items[overContainer].slice(0, newIndex),
+            items[activeContainer][activeIndex],
+            ...items[overContainer].slice(
+              newIndex,
+              items[overContainer].length
+            ),
+          ],
+        };
+      });
+    }
   }
 
 
   function handleOnDragEnd(over: Over | null, active: Active) {
-    const parsedData = active.data.current as SongType;
+    const activeContainer = findContainer(active.id);
 
-    if (!over && !parsedData.activeList) return;
+    console.log({over, active})
 
-    if (!over && parsedData.activeList) {
-      handleDeleteItem(parsedData.name, parsedData.activeList)
+    if (!activeContainer) {
+      setActiveId(null);
       return;
     }
 
-    if (parsedData.activeList) {
-      handleDeleteItem(parsedData.name, parsedData.activeList)
+    const overId = over?.id;
+
+    if (overId == null) {
+      setActiveId(null);
+      return;
     }
 
-    const { state, action } = actions[over!.id as keyof typeof actions];
+    const overContainer = findContainer(overId);
 
-    const newMap = new Map(state)
+    if (overContainer) {
+      const activeIndex = items[activeContainer].findIndex(({ id }) => id === active.id);
+      const overIndex = items[overContainer].findIndex(({ id }) => id === overId);
 
-    newMap.set(parsedData.name, parsedData)
+      if (activeIndex !== overIndex) {
+        setItems((items) => ({
+          ...items,
+          [overContainer]: arrayMove(
+            items[overContainer],
+            activeIndex,
+            overIndex
+          ),
+        }));
+      }
+    }
 
-    action(newMap)
+    setActiveId(null);
   }
+
+  const findContainer = (id: UniqueIdentifier) => {
+    if (id in items) {
+      return id;
+    }
+
+    return Object.keys(items).find((key) => items[key].some(({ id: songId }) => songId === id));
+  };
+
+  const getIndex = (id: UniqueIdentifier) => {
+    const container = findContainer(id);
+
+    if (!container) {
+      return -1;
+    }
+
+    return items[container].findIndex(({ id: songId }) => id === songId);
+  };
 
   /**
    * Custom collision detection strategy optimized for multiple containers
@@ -121,39 +215,54 @@ export default function Home() {
     [activeId]
   );
 
+  const onDragCancel = () => {
+    if (clonedItems) {
+      // Reset items to their original state in case items have been
+      // Dragged across containers
+      setItems(clonedItems);
+    }
+
+    setActiveId(null);
+    setClonedItems(null);
+  };
+
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(MouseSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
 
   return (
     <DndContext
+      sensors={sensors}
       collisionDetection={collisionDetectionStrategy}
+      onDragCancel={onDragCancel}
       onDragEnd={({ over, active }) => {
         handleOnDragEnd(over, active)
       }}
+      onDragOver={({ over, active }) => {
+        onDragOver(over, active)
+      }}
       onDragStart={({ active }) => {
         setActiveId(active.id);
+        setClonedItems(items);
       }}
     >
-      <main className="grid grid-cols-4 p-12 gap-2">
-        <div className="z-10 max-w-5xl flex gap-1 flex-col">
-          {songs.map(({ name }) => <Song key={name} name={name}/>)}
-        </div>
-        <Setlist id="1" droppableId="list-1">
-          {listOne.size > 0 &&
-            Array.from(listOne)
-              .map(([id, value], index) => <Song activeList="list-1" uniqueId={index + '-list-1'} key={id}
-                                                 name={value.name}/>)}
-        </Setlist>
-        <Setlist id="2" droppableId="list-2">
-          {listTwo.size > 0 &&
-            Array.from(listTwo)
-              .map(([id, value], index) => <Song activeList="list-2" uniqueId={index + '-list-2'} key={id}
-                                                 name={value.name}/>)}
-        </Setlist>
-        <Setlist id="3" droppableId="list-3">
-          {listThree.size > 0 &&
-            Array.from(listThree)
-              .map(([id, value], index) => <Song activeList="list-3" uniqueId={index + '-list-3'} key={id}
-                                                 name={value.name}/>)}
-        </Setlist>
+      <main className="inline-grid px-12 pt-6 gap-2 grid-flow-col w-full grid-cols-4">
+        {containers.map((containerId, index) => (
+          <React.Fragment key={containerId}>
+            <SortableContext
+              items={items[containerId]}
+              strategy={verticalListSortingStrategy}
+            >
+              <Setlist id={index} droppableId={containerId}>
+                {items[containerId].map(({ name, id }) => <Song id={id} key={name} name={name}/>)}
+              </Setlist>
+            </SortableContext>
+          </React.Fragment>
+        ))}
       </main>
     </DndContext>
   )
